@@ -4,6 +4,8 @@ Search through: http://arizonasnowbowl.com/ for snow and weather stats
 
 Get snow depth range, base and peak snow in past 24 hours, 
 the current high, snow conditions, road conditions, and weather conditions
+Usage:
+python azSnowBowlStats.py
 
 Output:
 csv file: azSnowBowlStats.csv
@@ -120,11 +122,12 @@ def roadHazard(rdCondStr):
         if w in r:
             for x in w4:                
                 if x in r and 'no' not in r:
-                    return 4
+                        return 4
                 else:
                     for y in w3:
                         if y in r:
                             return 3
+                    return 4
     
     #reached here: hazard level = 0, 1, or 2
     w2 = ['icy','ice','slick','slip']
@@ -204,6 +207,156 @@ def snowHazard(snwCondStr):
     
     return int(h.mean())
 
+
+
+def get_precip_prob(astring):
+    #pulls probability of precipitation from a weather description   
+    
+    kwords = ['%', 'percent']    #don't get to complicated,
+    #I could also look for chance, snow, rain, precip but these
+    #would almost certain follow the percent of '%' so would be farther
+    #from the number
+    #sometimes 'A slight chance of snow...' is used, calls this 1%
+    numbefore = 17
+    numafter = 41
+    #take the first hit and look X number of characters before
+    #and after for a number, with getNumber()
+    #if that fails, try numwords, if that fails, try next in kwords,
+    #if that fails both, its zero
+    numwords = {'zero':0,'five':5,'ten':10,'fifteen':15,'twenty':20,
+                'thirty':30,'forty':40,'fifty':50,'sixty':60,
+                'seventy':70,'eighty':80,'ninety':90,'hundred':100}
+    #others should have a hyphen or space between it and a five: 
+    #e.g. forty five
+    #mine would just round down, which is close enough
+    idx_shifts = [[-numbefore,0],[0,numafter]]
+    if 'snow' in astring or 'rain' in astring or 'precip' in astring:
+        for kw in kwords:
+            #returns index of start of my word, or -1 if not in aStr
+            idx = astring.find(kw)
+            if idx != -1:
+                for n in range(0,2):
+                    idxmin = idx + idx_shifts[n][0]
+                    #first try before, if fails, then try numwords, then try after
+                    idxmax = idx + idx_shifts[n][1]
+                    if idxmin < 0:
+                        idxmin = 0
+                    
+                    clip = astring[idxmin:idxmax]
+                    nums = getNumbers(clip)
+                    if len(nums) == 0:
+                        #try numwords
+                        for nw in numwords.keys():
+                            if nw in clip:
+                                return numwords[nw]
+                            #if not after the whole thing, after n == 1, returns 0
+                    #one or more nums
+                    else:
+                        #choose the last one in the list: closest to percent
+                        if n == 0:
+                            return nums[-1]
+                        #choose closest one to after
+                        #could do return nums[n-1] but in case I chance things...
+                        else:
+                            return nums[0]
+        #'slight chance'
+        little_chance= ['slight chance', 'small chance', 'little chance',
+                        'low chance']    
+        for lc in little_chance:
+            if lc in astring:
+                return 1 
+    
+    return 0
+
+            
+
+def getMoreWeather(is_forecast=False):
+    #If it is night, return None for missing data
+    site = 'http://forecast.weather.gov/MapClick.php?lat=35.33&lon=-111.7'
+    #the main temperature is for pulliam airport which is 
+    #south of flagstaff but the extended forecast is at 10mi NNW of Flagstaff
+    #pulling today's high and chance of precipitation
+    #and tonight's low and chance of precipitation
+    #I will use a similar function to 
+    #get the extended forecast if I want to make a prediction
+    try:
+        print('Retrieving data from '+site)
+        resp = requests.get(site)
+        soup = BeautifulSoup(resp.content)
+        assert soup is not None
+    except AssertionError:
+        print('No data retrieved from '+site)
+        sys.exit()
+        
+    the_node = soup
+    #get the temperature
+    ids = ["seven-day-forecast","seven-day-forecast-body",
+           "seven-day-forecast-list"]
+    tags = ["div","div","ul"]
+    try:
+        for i in range(len(ids)):
+            the_node = the_node.find(tags[i], {"id": ids[i]})
+            #asserts the_node is not empty (false if empty)
+            assert the_node
+    except AssertionError:
+        print('No '+tags[i]+ids[i]+' tags: error retrieved from '+site)
+        sys.exit()
+    
+    #make sure there's no weather advisory, messes up first in list
+    list0 = the_node.find('li')
+    if len(list0['class']) > 1:
+        list0 = list0.next_sibling
+    
+    #the way I do it now, I'd have to iterate this with next_sibling,
+    #what stops it? next_sibling returns None, but I still need to search for 'temp'
+    #within each loop, I need to check if parent has too long a class
+    list_i = list0
+    #check if first one is tonight: could use current time
+    #better to use Tonight in the first title of list0
+    daynight = list_i.find('p',{'class':'period-name'}).get_text()
+    if 'tonight' in daynight.lower():
+        is_night = True
+        lim = 1
+    else:
+        is_night = False
+        lim = 2
+    temps = []
+    pops = []
+    #written so I can have it exit afterward if I want a forecast
+    while list_i is not None:
+
+        tempnode = list_i.find('p',{'class':'temp'})
+        if tempnode is not None:
+            temps.extend(getNumbers(tempnode.get_text()))
+
+        descrip = list_i.find('p',{'class':''})
+        
+        if descrip is not None:
+            img = descrip.find('img')
+            dtext = img['alt']
+            if len(dtext) <= 2:
+                dtext = img['title']
+            pops.append(get_precip_prob(dtext))
+        
+        #if not is_forecast and len(temps) == 2 and len(pops) == 2:
+        #    return []
+        #if its morning/day: high then low: [low,high,max(pops[0],pops[1])]
+        #if its tonight: low,None,pops[0]
+        if not is_forecast:
+            if len(temps) == lim or len(pops) == lim:
+                if is_night:
+                    return [temps[0],None,pops[0]]
+                else:
+                    if pops[0] > pops[1] or len(pops) == 1:
+                        maxpop = pops[0]
+                    else:
+                        maxpop = pops[1]
+                    return [temps[1],temps[0],maxpop]
+
+        list_i = list_i.next_sibling
+        
+    #
+    
     
 
 def getConditions():
@@ -211,15 +364,15 @@ def getConditions():
 
     keys = ['Base Depth','24 hours','Surface','Road','Current']
     stats = {key:None for key in keys}
-    
+    site = 'http://arizonasnowbowl.com/'    
         
     try:
-        site = 'http://arizonasnowbowl.com/'
+        print('Retrieving data from '+site)
         resp = requests.get(site)
         soup = BeautifulSoup(resp.content)
         assert soup is not None
     except AssertionError:
-        print('No data retrieved from http://arizonasnowbowl.com/')
+        print('No data retrieved from '+site)
         sys.exit()
 
     try:
@@ -227,7 +380,7 @@ def getConditions():
         #asserts tds is not empty (false if empty)
         assert tds
     except AssertionError:
-        print('No td tags: error retrieved from http://arizonasnowbowl.com/')
+        print('No td tags: error retrieved from '+site)
         sys.exit()
     
     #nested dict comprehension
@@ -281,7 +434,7 @@ def getConditions():
     stats[keys[0]] = date.today().isoformat()
     keys.insert(1,'Weekday')
     stats[keys[1]] = date.today().strftime("%A")
-    keys.insert(6,'Temp')
+    keys.insert(6,'AzSbTemp')
     #date.today().isoformat()
     
     #re_weather = re.compile('wea[th][th]er*')
@@ -298,14 +451,15 @@ def getConditions():
 
 def getLiftsTrails():
 
+    site = 'http://arizonasnowbowl.com/?q=node/133'
 
-    try:
-        site = 'http://arizonasnowbowl.com/?q=node/133'
+    try:        
+        print('Retrieving data from '+site)
         resp = requests.get(site)
         soup = BeautifulSoup(resp.content)
         assert soup is not None
     except AssertionError:
-        print('No data retrieved from http://arizonasnowbowl.com/?q=node/133')
+        print('No data retrieved from '+site)
         sys.exit()
         
     snowRep = soup.find_all(class_='SnowReport')
@@ -367,7 +521,7 @@ def makeTrainingFile(df,yStr='SnowHazard',nDays=1,shift_ns=True,
     Concatenates the following for predictors of SnowHazard[0-4] or 
     RoadHazard[0-4] for the next day:
     
-    Weekday[0-6], NewBaseSnow, Temp, SnowHazard[0-5], RoadHazard[0-4]
+    Weekday[0-6], NewBaseSnow, AzSbTemp, SnowHazard[0-5], RoadHazard[0-4]
     
     If I want to make a prediction further in the future, 
     I can input data from the weather channel into predictBothHazards
@@ -386,7 +540,8 @@ def makeTrainingFile(df,yStr='SnowHazard',nDays=1,shift_ns=True,
         with logisticRegression
 
     """
-    columns = ['NewBaseSnow','Temp','SnowHazard','RoadHazard']
+    columns = ['NewBaseSnow','AzSbTemp','LowTemp','HighTemp','PrecipProb',
+               'SnowHazard','RoadHazard']
 
     #concatenate multiple days if nDays > 1
     nDays = int(nDays)
@@ -494,7 +649,8 @@ def stormTotal(sNewSnow):
 
 
 
-def interpDFCols(df,cols=['NewBaseSnow','Temp','SnowHazard','RoadHazard'],
+def interpDFCols(df,cols=['NewBaseSnow','AzSbTemp','LowTemp','HighTemp',
+                          'PrecipProb','SnowHazard','RoadHazard'],
                  rtn_interp=True):
     
     """Returns dataframe filled and interpolated with missing days
@@ -642,16 +798,17 @@ def plotStats(df, subplots=True, text=None):
     text : default False
 
     """
-
+    n_sn1 = 105 #or 107 if header not used in column names
+    n_sn2 = 106
     if not subplots:
         #return just one subplot
-        fig,ax = plt.subplots()
+        fig,ax = plt.subplots(figsize=(11,8.5))
         
         ax.set_ylabel('Inches, Degrees F, Number')
         df[['MinDepth','MaxDepth','NewBaseSnow','NewPeakSnow',
-            'Temp','OpenLifts','OpenTrails','SnowHazard',
-            'RoadHazard'
-            ]].plot(ax=ax,rot=30)
+            'AzSbTemp','LowTemp','HighTemp',
+            'OpenLifts','OpenTrails','SnowHazard','RoadHazard']
+            ].plot(ax=ax,rot=30)
 
         """
         #set box to 80% height
@@ -672,69 +829,98 @@ def plotStats(df, subplots=True, text=None):
         
         
     else:
-        fig, axes = plt.subplots(nrows=4,ncols=1)
+        fig, axes = plt.subplots(nrows=4,ncols=2,figsize=(11,8.5))
 
-        axes[0].set_ylabel('Inches')
-        axes[1].set_ylabel('Hazard Level')
-        axes[2].set_ylabel('Number')
+        axes[0][0].set_ylabel('Inches')
+        axes[1][0].set_ylabel('Hazard Level')
+        axes[2][0].set_ylabel('Number')
         #plt.rc('text',usetex=True)        
         #latex in label r'dsjklsdjk', failed: may be latex problem
-        axes[3].set_ylabel('Degrees F')
-        
+        axes[3][0].set_ylabel('Degrees F')
+        #don't label second column's y-axis. its the same going across
 
-        axes[0] = df[['MinDepth','MaxDepth','NewBaseSnow',
-            'NewPeakSnow']].plot(ax=axes[0])
-        axes[1] = df[['SnowHazard','RoadHazard']].plot(ax=axes[1],ylim=[0,6])
-        axes[2] = df[['OpenLifts','OpenTrails']].plot(ax=axes[2],ylim=[0,47])
-        axes[3] = df[['Temp']].plot(ax=axes[3],rot=20)
+        #maybe cast as a dataframe
+
+        axes[0][0] = df.ix[:n_sn1,['MinDepth','MaxDepth','NewBaseSnow','NewPeakSnow']].plot(ax=axes[0][0],legend=False)
+        axes[1][0] = df.ix[:n_sn1,['SnowHazard','RoadHazard']].plot(ax=axes[1][0],ylim=[0,6],legend=False)
+        axes[2][0] = df.ix[:n_sn1,['OpenLifts','OpenTrails']].plot(ax=axes[2][0],ylim=[0,47],legend=False)
+        axes[3][0] = df.ix[:n_sn1,['AzSbTemp','LowTemp','HighTemp']].plot(ax=axes[3][0],rot=20,legend=False)
         
-        for i in range(3):
-            axes[i].tick_params(
-                axis='x',          # changes apply to the x-axis
-                which='both',      # both major and minor ticks are affected
-                labelbottom='off')
-            axes[i].set_xlabel('',visible=False)
-        
-        for ax in axes:
-            """
-            #set box to 70% width for outside legend - replaced
-            #replaced by subplots_adjust
-            box = ax.get_position()
-            ax.set_position([box.x0, box.y0, box.width*0.7, box.height])
-            """
-            if text is not None:
-                [x, y, s] = text
-                ax.text(x,y,s)
-            #bbox_to_anchor=(x_pos of loc,y_pos of loc, x_backgnd width,?)
-            ax.xaxis.grid(True)
-            ax.yaxis.grid(True)
-            ax.legend(bbox_to_anchor=(1.02,1.,
-            0.5,0.),loc=2,ncol=1, mode="expand", borderaxespad=0.)
+        axes[0][1] = df.ix[n_sn2:,['MinDepth','MaxDepth','NewBaseSnow','NewPeakSnow']].plot(ax=axes[0][1])
+        axes[1][1] = df.ix[n_sn2:,['SnowHazard','RoadHazard']].plot(ax=axes[1][1],ylim=[0,6])
+        axes[2][1] = df.ix[n_sn2:,['OpenLifts','OpenTrails']].plot(ax=axes[2][1],ylim=[0,47])
+        axes[3][1] = df.ix[n_sn2:,['LowTemp','HighTemp','AzSbTemp']].plot(ax=axes[3][1],rot=20)
+
+        for j in range(2):
+            for i in range(3):
+                axes[i][j].tick_params(
+                    axis='x',          # changes apply to the x-axis
+                    which='both',      # both major and minor ticks are affected
+                    labelbottom='off')
+                axes[i][j].set_xlabel('',visible=False)
+        lgds=[]
+        for i in range(4):
+            for j, ax in enumerate(axes[i]):
+                """
+                #set box to 70% width for outside legend - replaced
+                #replaced by subplots_adjust
+                box = ax.get_position()
+                ax.set_position([box.x0, box.y0, box.width*0.7, box.height])
+                """
+                if text is not None:
+                    [x, y, s] = text
+                    ax.text(x,y,s)
+                #bbox_to_anchor=(x_pos of loc,y_pos of loc, x_backgnd width,?)
+                ax.xaxis.grid(True)
+                ax.yaxis.grid(True)
+                if j == 1:
+                    lgds.append(ax.legend(bbox_to_anchor=(1.02,1.,
+                    0.5,0.),loc=2,ncol=1, mode="expand", borderaxespad=0.,
+                    fontsize=11))
     
         plt.tight_layout(h_pad=0.0)
         #adjust tight layout for legend (not done with command)
-        fig.subplots_adjust(right=0.67)
+        fig.subplots_adjust(right=0.775)
+        #fig.savefig('azSnowBowlStats.png',
+        #            bbox_extra_artists=lgds,bbox_inches='tight')
+        
+    #I need to figure out how to plot PrecipProb (0-100%): I'd like it
+    #with the High and Low, but its scale be on the right axis, a 
+    #different axis than the others
     
     
     plt.show()
     
 
- 
 
 def main():
 
 
     [stats,keys] = getConditions()
 
+    [low,high,precip] = getMoreWeather()
+
+    keys.insert(7,'LowTemp')
+    keys.insert(8,'HighTemp')
+    keys.insert(9,'PrecipProb')
+
+    [stats[keys[7]],stats[keys[8]],stats[keys[9]]] = [low,high,precip]
+
+
+    #I'll need to see if lifts and trails are calculated correctly still
+    #one or more new lifts/trails have opened
+    #also need to update plotting, glowscript and azSnowBowlStats.csv,
+    #and training file data
     [lifts,trails] = getLiftsTrails()
     
-    keys.insert(7,'OpenLifts')
-    keys.insert(8,'Lifts')
-    keys.insert(9,'OpenTrails')
-    keys.insert(10,'Trails')
+    keys.insert(10,'OpenLifts')
+    keys.insert(11,'Lifts')
+    keys.insert(12,'OpenTrails')
+    keys.insert(13,'Trails')
 
-    [stats[keys[7]],stats[keys[8]]] = getNOpen(lifts)
-    [stats[keys[9]],stats[keys[10]]] = getNOpen(trails)
+    #I'll need to check if lifts and trails are calculated correctly
+    [stats[keys[10]],stats[keys[11]]] = getNOpen(lifts)
+    [stats[keys[12]],stats[keys[13]]] = getNOpen(trails)
     
     #Loop ended
     filename = 'azSnowBowlStats.csv'
