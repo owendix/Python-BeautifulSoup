@@ -15,7 +15,8 @@ Uses nested dict comprehensions
 """
 from bs4 import BeautifulSoup
 import re, os.path, sys, requests
-from datetime import date
+from datetime import date, datetime, timedelta
+from dateutil.parser import parse
 from pandas import Series, DataFrame
 import numpy as np
 import pandas as pd
@@ -347,20 +348,47 @@ def getMoreWeather(is_forecast=False):
                 if is_night:
                     return [temps[0],None,pops[0]]
                 else:
-                    if pops[0] > pops[1] or len(pops) == 1:
-                        maxpop = pops[0]
+                    if len(pops) == 1:
+                        poptotal = pops[0]
                     else:
-                        maxpop = pops[1]
-                    return [temps[1],temps[0],maxpop]
+                        #return the total probability of precipitation
+                        #assumes independence of day and night prob
+                        #d = rains during day, n = rains during night
+                        #p(d') prob it does NOT rain during day
+                        #p(dn) = prob it rains during day and night
+                        #p(d+n) = prob it rains during day or night
+                        #p(d+n) = 1 - p((d+n)') = 1 - p(d'n')
+                        #indep: p(d+n) = 1 - p(d')p(n')
+                        #p(d+n) = 1 - (1-p(d))(1-p(n)), where p:[0-1]
+                        poptotal = 100*(1 - (1-0.01*pops[0])*(1-0.01*pops[1]))
+                        
+                    return [temps[1],temps[0],poptotal]
 
         list_i = list_i.next_sibling
         
     #
     
+
+is_updated = False
+last_update = ''
+
+def since_datetime(dtstr,now):
+    #determines if a datetime string dtstr is within a certain datetime
+    #relative to now, a datetime object
+    since_timestr = '4:00 PM'
+    ndays_ago = 1   #1 is yesterday at time above
+    
+        
+    since_dt = now - timedelta(ndays_ago)    
+    since_dt = parse(since_dt.strftime('%b %d, %Y')+
+                        ' '+since_timestr)
+    lastup=parse(dtstr.strip('Last Update:').strip(' '))
+    
+    return lastup >= since_dt
     
 
 def getConditions():
-
+    global is_updated, last_update
 
     keys = ['Base Depth','24 hours','Surface','Road','Current']
     stats = {key:None for key in keys}
@@ -374,7 +402,40 @@ def getConditions():
     except AssertionError:
         print('No data retrieved from '+site)
         sys.exit()
-
+        
+    #check last update
+    try:
+        dates = soup.find_all('span',{'class':'date'})
+        assert dates is not None
+    except AssertionError:
+        print('***Last Website Update unknown***')
+        is_updated = False
+    else:
+        now = datetime.now()
+        
+        for d in dates:
+            dstr = d.get_text()
+            if 'pdate' in dstr:
+                if since_datetime(dstr,now):
+                    is_updated = True
+                    last_update = d.get_text()
+                else:
+                    is_updated = False
+                    last_update = d.get_text()
+                    print('***Last Website Update Was Not Recent:',
+                          last_update.strip('Last Update:').strip(' '),'***')
+                break
+        
+    try:
+        assert 'pdate' in last_update
+        last_update = last_update.strip('Last Update:').strip(' ')
+    except AssertionError:
+        print('***Last Website Update unknown***')
+        is_updated = False
+        last_update = dates[0]
+                
+    
+    #get conditions
     try:
         tds = soup.find_all('td')
         #asserts tds is not empty (false if empty)
@@ -935,6 +996,8 @@ def main():
         
     print(','.join(keys))
     print(repr(ordered_stats).replace(', ',',').strip('[]'))
+    if not is_updated:
+        print('***Last Website Update:',last_update,'***')
         
 if __name__ == '__main__':
     main()
