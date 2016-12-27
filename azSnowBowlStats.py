@@ -21,6 +21,7 @@ from pandas import Series, DataFrame
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from math import ceil
 
 
 def getNumbers(aString):
@@ -146,39 +147,16 @@ def roadHazard(rdCondStr):
     
 def snowHazard(snwCondStr):
     
-    """Return the snow hazard level (0-5) for a given snow condition string
+    """Return the snow hazard level (0-4) for a given snow condition string
     
     Argument:
     snwCondStr: a string describing the snow conditions
     
     Return:
-    An integer from 0-5 where 0 is no hazard and 5 is high hazard
+    An integer from 0-4 where 0 is no hazard and 4 is high hazard
     
     doctest:
-    >>> snowHazard('Fresh powder and groomed variable conditions')
-    2
-    
-    >>> snowHazard('Groomed variable conditions')
-    4
-    
-    >>> snowHazard('Packed powder and groomed variable conditions')
-    3  
-
-    >>> snowHazard('Packed powder')
-    2
-    
-    >>> snowHazard('Powder and Packed Powder conditions')
-    1
-    
-    >>> snowHazard('Spring like conditions')
-    5
-    
-    >>> snowHazard('Trace of New - Powder and packed powder')
-    1
-    
-    >>> snowHazard('Fresh powder')
-    0
-    
+    >>> snowHazard('Fresh powder and groomed variable conditions')    
     
     """
     
@@ -187,27 +165,25 @@ def snowHazard(snwCondStr):
     
     w4=['spring','summ','ice','hard','icy']
     w3='groom'
-    w1='pack'
-    wavg = 'and'
+    w2=['pack', 'vary','variable']
+    w1='wet'
+    #w0='powder'
     
     for w in w4:
         if w in s:
-            return 5
+            return 4
 
-    h = np.array([])        
+    #h = np.array([])        
     
     if w3 in s:
-        h = np.append(h,4)
+        return 3
+    for w in w2:
+        if w in s:
+            return 2
     if w1 in s:
-        h = np.append(h,2)
-    if wavg in s:
-        if len(h) < 2:
-            h = np.append(h,0)
-    elif len(h) == 0:
-        h = np.append(h,0)
+        return 1            
     
-    return int(h.mean())
-
+    return 0
 
 
 def get_precip_prob(astring):
@@ -283,7 +259,7 @@ def getMoreWeather(is_forecast=False):
     try:
         print('Retrieving data from '+site)
         resp = requests.get(site)
-        soup = BeautifulSoup(resp.content)
+        soup = BeautifulSoup(resp.content, "lxml")
         assert soup is not None
     except AssertionError:
         print('No data retrieved from '+site)
@@ -362,11 +338,23 @@ def getMoreWeather(is_forecast=False):
                         #p(d+n) = 1 - (1-p(d))(1-p(n)), where p:[0-1]
                         poptotal = 100*(1 - (1-0.01*pops[0])*(1-0.01*pops[1]))
                         
-                    return [temps[1],temps[0],poptotal]
+                    return [temps[1],temps[0],round(poptotal)]
 
         list_i = list_i.next_sibling
         
     #
+    temp_hdr = ''
+    pop_hdr = ''
+    if len(temps)%2 == 1:
+        temp_hdr = temp_hdr + 'Temp(F),'
+        pop_hdr = pop_hdr + 'POP(%),'
+    for i in range(len(temps)//2):
+        temp_hdr=temp_hdr+'Temp(F),Temp(F),'
+        pop_hdr = pop_hdr + 'POP(%),POP(%),'
+    print(temp_hdr)
+    print(temps)
+    print(pop_hdr)
+    print(pops)
     
 
 is_updated = False
@@ -397,7 +385,7 @@ def getConditions():
     try:
         print('Retrieving data from '+site)
         resp = requests.get(site)
-        soup = BeautifulSoup(resp.content)
+        soup = BeautifulSoup(resp.content, "lxml")
         assert soup is not None
     except AssertionError:
         print('No data retrieved from '+site)
@@ -517,7 +505,7 @@ def getLiftsTrails():
     try:        
         print('Retrieving data from '+site)
         resp = requests.get(site)
-        soup = BeautifulSoup(resp.content)
+        soup = BeautifulSoup(resp.content, "lxml")
         assert soup is not None
     except AssertionError:
         print('No data retrieved from '+site)
@@ -892,7 +880,7 @@ def plotStats(df, subplots=True, text=None):
     else:
         fig, axes = plt.subplots(nrows=4,ncols=2,figsize=(11,8.5))
 
-        axes[0][0].set_ylabel('Inches')
+        axes[0][0].set_ylabel('%, Inches')
         axes[1][0].set_ylabel('Hazard Level')
         axes[2][0].set_ylabel('Number')
         #plt.rc('text',usetex=True)        
