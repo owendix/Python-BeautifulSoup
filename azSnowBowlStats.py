@@ -432,14 +432,26 @@ def getConditions():
         print('No td tags: error retrieved from '+site)
         sys.exit()
     
-    #nested dict comprehension
-    stats = {key:str.strip(tds[i+1].getText())
-        for i,tag in enumerate(tds) for key in keys
-        if key in tag.getText()
-        }
+    stats = dict()
+    is_finished = False
+    just_added = False
+    for i,tag in enumerate(tds):
+        if is_finished:
+            break
+        if just_added:
+            just_added = False
+            continue
+        for key in keys:
+            if key.lower() in tag.getText().lower():
+                stats[key] = tds[i+1].getText()
+                if len(keys) == len(stats):
+                    is_finished = True
+                    break
+                just_added = True
+                continue
+            
     
-    #Strip off opening weekday
-
+    #Strip off opening weekday        
     stats['Current'] = lStripWeekday(stats['Current'])
     
     #rekey stats dictionary, want reverse order for first loop
